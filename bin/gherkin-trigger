@@ -1,0 +1,69 @@
+#!/usr/bin/python
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+
+try:
+    import configparser
+except:
+    import ConfigParser as configparser
+
+
+class GherkinJob(object):
+    def __init__(self, url, token):
+        self.url = url
+        self.token = token
+
+    def run(change, patchset):
+        params = urllib.urlencode({
+            'token': self.token,
+            'GERRIT_PATCHSET_NUMBER': patchset['number'],
+            'GERRIT_PATCHSET_REVISION': patchset['revision'],
+            'GERRIT_CHANGE_ID': change['id']
+        })
+        f = urllib.urlopen(self.url, params)
+        logging.info(f.read())
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--ssh-host', required=True)
+    parser.add_argument('--ssh-port', required=True)
+    parser.add_argument('--jenkins-url', required=True)
+    parser.add_argument('--jenkins-token', required=True)
+    parser.add_argument('-v', action="store_true", help="verbose (default: false)")
+
+    args = vars(parser.parse_args())
+    ssh_host = args.get('ssh-host') 
+    ssh_port = args.get('ssh-port')
+    jenkins_url = args.get('jenkins-url')
+    jenkins_token = args.get('jenkins-token')
+    verbose = args.get('v', False)
+
+    log_level = (logging.WARN, logging.DEBUG)[verbose]
+    logging.basicConfig(level=log_level)
+
+    ssh_cmd = ['ssh', '-p', ssh_port,  ssh_host,
+               'gerrit', 'stream-events']
+    job = GherkinJob(jenkins_url, jenkins_token)
+
+    while True:
+        try:
+            ssh = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE)
+
+            for line in ssh.stdout.readline():
+                c = json.loads(line)
+                if c['type'] == 'comment-added':
+                    if c['comment'].startswith('recheck'):
+                        job.run(c['change'], c['patchset'])
+                if c['type'] == 'patchset-added':
+                    job.run(c['change'], c['patchset'])
+
+        except IOError:
+            continue
+        else:
+            break
